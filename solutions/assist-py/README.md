@@ -124,3 +124,11 @@ curl http://localhost:8000/notes
 4. `curl http://localhost:8000/weather/London` — должен вернуть температуру, влажность, ветер
 5. `docker inspect --format='{{.State.Health.Status}}' personal-assistant` — должен вернуть `healthy`
 
+## Хранение данных
+
+Создаются именованный volume `yamaleeva-pgdata` (данные PostgreSQL) и сеть `yamaleeva-backend`. Конфигурация `config/app.conf` подключается к контейнеру через bind mount
+docker volume create yamaleeva-pgdata
+docker network create yamaleeva-backend
+docker run -d --name yamaleeva-postgres --network yamaleeva-backend -e POSTGRES_USER=user_468183 -e POSTGRES_PASSWORD=pgpass_468183 -e POSTGRES_DB=yamaleeva83 -v yamaleeva-pgdata:/var/lib/postgresql/data postgres:15
+docker run -d --name yamaleeva-assistant --network yamaleeva-backend -p 8083:8083 -e APP_OWNER=yamaleeva -e APP_SECRET=secret83yamaleeva -e DATABASE_URL="postgresql://user_468183:pgpass_468183@yamaleeva-postgres:5432/yamaleeva83" -v “$(pwd)/config:/app/config:ro” yamaleeva-assistant:v3
+Проверка: `curl http://localhost:8083/health` и `curl http://localhost:8083/notes`.
