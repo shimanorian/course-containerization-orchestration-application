@@ -145,7 +145,7 @@ async def weather(city: str):
         return {**cached, "source": "cache", **_meta()}
 
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=20.0) as client:
             geo_resp = await client.get(
                 "https://geocoding-api.open-meteo.com/v1/search",
                 params={"name": city, "count": 1, "language": "ru"},
@@ -162,7 +162,7 @@ async def weather(city: str):
             country = location.get("country", "")
 
             weather_resp = await client.get(
-                "https://api.open-meteo.com/v1/forecast",
+                "https://weather.tk.gg/v1/forecast",
                 params={
                     "latitude": lat,
                     "longitude": lon,
