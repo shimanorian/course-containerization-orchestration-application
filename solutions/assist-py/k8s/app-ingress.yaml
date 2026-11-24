@@ -1,0 +1,17 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: yamaleeva-app
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: yamaleeva.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: yamaleeva-app
+                port:
+                  number: 8083

@@ -111,15 +111,7 @@
 \newcommand{\reportscreenshot}[3]{
   \begin{figure}[H]
     \centering
-    \IfFileExists{#1}{
-      \includegraphics[width=0.95\linewidth,height=0.55\textheight,keepaspectratio]{#1}
-    }{
-      \fbox{\parbox[c][35mm][c]{0.9\linewidth}{
-        \centering Вставьте собственный скриншот\\
-        \texttt{\detokenize{#1}}\\
-        Эта рамка не является результатом выполнения работы.
-      }}
-    }
+    \includegraphics[width=\linewidth,height=0.55\textheight,keepaspectratio]{#1}
     \caption{#2}\label{#3}
   \end{figure}
 }
@@ -139,4 +131,12 @@
   \counterwithin{figure}{chapter}
   \counterwithin{table}{chapter}
   \counterwithin{equation}{chapter}
+}
+
+\newcommand{\manifestshot}[3][1]{%
+  \begin{figure}[H]
+    \centering
+    \includegraphics[width=#1\linewidth,height=0.76\textheight,keepaspectratio]{notepad-#2.png}
+    \caption{#3}\label{fig:notepad-#2}
+  \end{figure}
 }

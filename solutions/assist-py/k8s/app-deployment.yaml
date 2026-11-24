@@ -40,13 +40,13 @@ spec:
           readinessProbe:
             httpGet:
               path: /health
-              port: http
+              port: 8083
             initialDelaySeconds: 5
             periodSeconds: 10
             timeoutSeconds: 5
           livenessProbe:
             httpGet:
-              path: /live
-              port: http
+              path: /health
+              port: 8083
             initialDelaySeconds: 15
             periodSeconds: 20
