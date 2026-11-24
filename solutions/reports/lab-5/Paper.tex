@@ -1,0 +1,336 @@
+
+\reportelement{Введение}
+
+Цель работы — развернуть приложение FastAPI из ЛР №4 в локальном кластере Kubernetes. Для запуска используется Minikube с драйвером Docker, для управления ресурсами — kubectl. Необходимо проверить доступность приложения, запись заметок в PostgreSQL и кэширование погоды в Redis.
+
+\begin{table}[H]
+  \caption{Персональные параметры}\label{tab:personal}
+  \centering
+  \begin{tabularx}{\textwidth}{|p{0.42\textwidth}|X|}
+    \hline
+    Параметр & Значение\\ \hline
+    Номер ИСУ & \StudentISU\\ \hline
+    Префикс ресурсов & \texttt{yamaleeva}\\ \hline
+    Имя базы данных & \texttt{yamaleeva83}\\ \hline
+    Секретный ключ & Учебный ключ составлен из \texttt{secret}, цифр \texttt{83} и фамилии латиницей. В открытой версии значение скрыто.\\ \hline
+    Порт NodePort & \texttt{30083}\\ \hline
+    Значение \texttt{APP\_OWNER} & \StudentName\\ \hline
+  \end{tabularx}
+\end{table}
+
+Ветка работы: \url{\RepositoryURL}.
+
+\chapter{Ход выполнения}
+
+\section{Подготовка образа}
+
+Приложение собирается из \texttt{Dockerfile} в каталоге проекта.
+Образ загружается в профиль \texttt{lab5}. Политика \texttt{Never}
+указывает использовать этот локальный образ.
+
+\begin{code}
+minikube start -p lab5 --driver=docker --cpus=2 --memory=4096
+docker build -t yamaleeva-assist-py:lab5 .
+minikube -p lab5 image load --overwrite yamaleeva-assist-py:lab5
+minikube -p lab5 image ls | grep yamaleeva
+\end{code}
+\reportscreenshot{01-image.png}{Образ приложения в Minikube}{fig:image}
+
+\section{PostgreSQL, Redis и приложение}
+
+PostgreSQL и Redis имеют свои Deployment и внутренние Service типа
+ClusterIP. Для PostgreSQL создаётся PVC на 1 ГиБ. Данные хранятся в
+томе, который сохраняется при замене пода. Сервисы доступны по DNS-именам
+\texttt{yamaleeva-postgres} и \texttt{yamaleeva-redis}.
+
+Параметры FastAPI передаются из ConfigMap, пароль базы данных и ключ
+приложения берутся из Secret. В Git хранится образец Secret с учебными
+заполнителями. Приложение запускается на порту 8083. Service
+типа NodePort публикует порт 30083.
+
+\begin{code}
+kubectl get pods -o wide
+kubectl get svc,pvc
+kubectl get cm yamaleeva-app-config -o jsonpath='{.data.APP_OWNER}{"\n"}'
+\end{code}
+\reportscreenshot{02-resources.png}{Поды, сервисы, PVC и значение APP\_OWNER}{fig:resources}
+
+\section{Проверка API}
+
+Для запросов из WSL используется проброс порта.
+\begin{code}
+kubectl port-forward svc/yamaleeva-app 8083:8083
+\end{code}
+Поле \texttt{hostname} в ответе \texttt{GET /} сверяется с именем
+пода. \texttt{GET /health} проверяет соединение с PostgreSQL запросом
+\texttt{SELECT 1} и доступность Redis командой \texttt{PING}.
+
+\reportscreenshot{03-http.png}{Ответы GET / и GET /health}{fig:http}
+
+При пустом кэше первый запрос погоды для Москвы получает данные из
+внешнего API. Повторный запрос в течение 120 секунд читает готовый
+ответ из Redis. Поле \texttt{source} показывает источник ответа.
+
+\reportscreenshot{04-weather.png}{Первый и повторный запросы погоды}{fig:weather}
+
+Команда \texttt{POST /notes} сохраняет заметку в PostgreSQL.
+Для чтения списка используется \texttt{GET /notes}.
+
+\reportscreenshot{05-notes.png}{Добавление и чтение заметки}{fig:notes}
+
+\section{Пробы работоспособности}
+
+Readiness-проба вызывает \texttt{/health}. Если запрос к PostgreSQL
+или Redis завершается ошибкой, API возвращает HTTP 503, и Kubernetes
+исключает под из списка получателей трафика. Liveness-проба вызывает
+\texttt{/live}. При нескольких неудачных проверках kubelet перезапускает
+контейнер~\cite{k8s-probes}. Результаты проверяются через
+\texttt{kubectl describe pod -l app=yamaleeva-app}.
+
+\reportscreenshot{06-probes.png}{Настройки проб и условие Ready}{fig:probes}
+
+\reportelement{Заключение}
+
+Для приложения подготовлены манифесты FastAPI, PostgreSQL и Redis.
+Постоянное хранилище подключается к PostgreSQL через PVC. Для проверки
+подготовлены запросы к API и команды просмотра ресурсов кластера.
+
+\begin{thebibliography}{9}
+\bibitem{k8s-probes} Kubernetes. Liveness, Readiness, and Startup Probes.
+  \url{https://kubernetes.io/docs/concepts/workloads/pods/probes/}.
+\bibitem{minikube} Minikube. Команды управления образами.
+  \url{https://minikube.sigs.k8s.io/docs/commands/image/}.
+\end{thebibliography}
+
+\startreportappendices
+\reportappendix{Манифесты Kubernetes}
+
+\section{\texttt{app-configmap.yaml}}
+\begin{code}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: yamaleeva-app-config
+data:
+  APP_OWNER: "Ямалеева Азалия Фиразовна"
+  POSTGRES_HOST: yamaleeva-postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: user_468183
+  POSTGRES_DB: yamaleeva83
+  PGCONNECT_TIMEOUT: "3"
+  REDIS_URL: redis://yamaleeva-redis:6379/0
+  CACHE_TTL: "120"
+\end{code}
+
+\section{\texttt{app-deployment.yaml}}
+\begin{code}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: yamaleeva-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: yamaleeva-app
+  template:
+    metadata:
+      labels:
+        app: yamaleeva-app
+    spec:
+      initContainers:
+        - name: wait-for-postgres
+          image: postgres:15
+          envFrom:
+            - configMapRef:
+                name: yamaleeva-app-config
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h "$POSTGRES_HOST" -U "$POSTGRES_USER" -d "$POSTGRES_DB"; do
+                sleep 2
+              done
+      containers:
+        - name: app
+          image: yamaleeva-assist-py:lab5
+          imagePullPolicy: Never
+          ports:
+            - name: http
+              containerPort: 8083
+          envFrom:
+            - configMapRef:
+                name: yamaleeva-app-config
+            - secretRef:
+                name: yamaleeva-app-secret
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /live
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+\end{code}
+
+\section{\texttt{app-secret.example.yaml}}
+\begin{code}
+apiVersion: v1
+kind: Secret
+metadata:
+  # Учебный пример. Скопируйте вне Git и смените имя на yamaleeva-app-secret.
+  name: yamaleeva-app-secret-example
+type: Opaque
+stringData:
+  APP_SECRET: change_me
+  POSTGRES_PASSWORD: change_me
+\end{code}
+
+\section{\texttt{app-service.yaml}}
+\begin{code}
+apiVersion: v1
+kind: Service
+metadata:
+  name: yamaleeva-app
+spec:
+  type: NodePort
+  selector:
+    app: yamaleeva-app
+  ports:
+    - name: http
+      port: 8083
+      targetPort: http
+      nodePort: 30083
+\end{code}
+
+\section{\texttt{postgres-deployment.yaml}}
+\begin{code}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: yamaleeva-postgres
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: yamaleeva-postgres
+  template:
+    metadata:
+      labels:
+        app: yamaleeva-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15
+          ports:
+            - name: postgres
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -h 127.0.0.1 -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            periodSeconds: 5
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: yamaleeva-app-config
+                  key: POSTGRES_USER
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: yamaleeva-app-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: yamaleeva-app-secret
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: postgres-data
+          persistentVolumeClaim:
+            claimName: yamaleeva-postgres-data
+\end{code}
+
+\section{\texttt{postgres-pvc.yaml}}
+\begin{code}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: yamaleeva-postgres-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+\end{code}
+
+\section{\texttt{postgres-service.yaml}}
+\begin{code}
+apiVersion: v1
+kind: Service
+metadata:
+  name: yamaleeva-postgres
+spec:
+  type: ClusterIP
+  selector:
+    app: yamaleeva-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+\end{code}
+
+\section{\texttt{redis-deployment.yaml}}
+\begin{code}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: yamaleeva-redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: yamaleeva-redis
+  template:
+    metadata:
+      labels:
+        app: yamaleeva-redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            periodSeconds: 5
+\end{code}
+
+\section{\texttt{redis-service.yaml}}
+\begin{code}
+apiVersion: v1
+kind: Service
+metadata:
+  name: yamaleeva-redis
+spec:
+  type: ClusterIP
+  selector:
+    app: yamaleeva-redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+\end{code}
