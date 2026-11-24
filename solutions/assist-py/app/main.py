@@ -1,12 +1,14 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import json
-import logging
 import os
 import socket
 
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Response
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 import httpx
 import redis.asyncio as aioredis
@@ -14,8 +16,6 @@ import redis.asyncio as aioredis
 from app.database import engine, get_db
 from app.models import Base
 from app import crud
-
-logger = logging.getLogger("uvicorn.error")
 
 OWNER = os.getenv("APP_OWNER", "anonymous")
 SECRET_KEY = os.getenv("APP_SECRET", "default_secret")
@@ -29,17 +29,19 @@ redis_client: aioredis.Redis | None = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global redis_client
-    Base.metadata.create_all(bind=engine)
+    with engine.begin() as connection:
+        if connection.dialect.name == "postgresql":
+            # Serialize schema creation when several replicas start together.
+            connection.execute(text("SELECT pg_advisory_xact_lock(468183)"))
+        Base.metadata.create_all(bind=connection)
+    redis_client = aioredis.from_url(
+        REDIS_URL, decode_responses=True, socket_connect_timeout=2, socket_timeout=2
+    )
     try:
-        redis_client = aioredis.from_url(REDIS_URL, decode_responses=True)
-        await redis_client.ping()
-        logger.info("Redis connected: %s", REDIS_URL)
-    except Exception as exc:
-        logger.warning("Redis unavailable (%s) — caching disabled", exc)
-        redis_client = None
-    yield
-    if redis_client:
+        yield
+    finally:
         await redis_client.aclose()
+        redis_client = None
 
 
 app = FastAPI(title="Personal Assist", lifespan=lifespan)
@@ -70,15 +72,39 @@ async def root():
     }
 
 
+def _postgres_available() -> bool:
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except SQLAlchemyError:
+        return False
+    return True
+
+
+@app.get("/live")
+async def live():
+    return {"status": "alive"}
+
+
 @app.get("/health")
-async def health():
+async def health(response: Response):
+    postgres_ok = await run_in_threadpool(_postgres_available)
     redis_ok = False
     if redis_client:
         try:
-            redis_ok = await redis_client.ping()
-        except Exception:
+            redis_ok = bool(await redis_client.ping())
+        except aioredis.RedisError:
             pass
-    return {"status": "healthy", "owner": OWNER, "redis": redis_ok, **_meta()}
+    healthy = postgres_ok and redis_ok
+    if not healthy:
+        response.status_code = 503
+    return {
+        "status": "healthy" if healthy else "unavailable",
+        "owner": OWNER,
+        "postgres": postgres_ok,
+        "redis": redis_ok,
+        **_meta(),
+    }
 
 
 @app.get("/me")

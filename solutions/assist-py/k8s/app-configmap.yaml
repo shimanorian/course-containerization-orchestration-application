@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: yamaleeva-app-config
+data:
+  APP_OWNER: "Ямалеева Азалия Фиразовна"
+  POSTGRES_HOST: yamaleeva-postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: user_468183
+  POSTGRES_DB: yamaleeva83
+  PGCONNECT_TIMEOUT: "3"
+  REDIS_URL: redis://yamaleeva-redis:6379/0
+  CACHE_TTL: "120"

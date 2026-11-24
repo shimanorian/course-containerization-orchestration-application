@@ -126,9 +126,65 @@ curl http://localhost:8000/notes
 
 ## Хранение данных
 
-Создаются именованный volume `yamaleeva-pgdata` (данные PostgreSQL) и сеть `yamaleeva-backend`. Конфигурация `config/app.conf` подключается к контейнеру через bind mount
-docker volume create yamaleeva-pgdata
-docker network create yamaleeva-backend
-docker run -d --name yamaleeva-postgres --network yamaleeva-backend -e POSTGRES_USER=user_468183 -e POSTGRES_PASSWORD=pgpass_468183 -e POSTGRES_DB=yamaleeva83 -v yamaleeva-pgdata:/var/lib/postgresql/data postgres:15
-docker run -d --name yamaleeva-assistant --network yamaleeva-backend -p 8083:8083 -e APP_OWNER=yamaleeva -e APP_SECRET=secret83yamaleeva -e DATABASE_URL="postgresql://user_468183:pgpass_468183@yamaleeva-postgres:5432/yamaleeva83" -v “$(pwd)/config:/app/config:ro” yamaleeva-assistant:v3
-Проверка: `curl http://localhost:8083/health` и `curl http://localhost:8083/notes`.
+В Docker Compose данные PostgreSQL хранятся в томе `yamaleeva-db-data`. Для запуска прежней версии используются `docker-compose.yml` и локальный файл `.env` по образцу `.env.example`.
+
+## Kubernetes — ЛР5
+
+Команды выполняются из `solutions/assist-py` в Ubuntu или WSL2. Для WSL2 включите интеграцию Ubuntu в Docker Desktop. Установите [Minikube](https://minikube.sigs.k8s.io/docs/start/) и откройте Docker Desktop.
+
+```bash
+docker version
+minikube start -p lab5 --driver=docker --cpus=2 --memory=4096
+# Дальше в этом терминале можно использовать встроенный kubectl.
+kubectl() { minikube -p lab5 kubectl -- "$@"; }
+
+docker build -t yamaleeva-assist-py:lab5 .
+minikube -p lab5 image load --overwrite yamaleeva-assist-py:lab5
+minikube -p lab5 image ls | grep yamaleeva
+```
+
+Создайте локальный Secret. Введите учебный ключ по формуле из задания и учебный пароль PostgreSQL. Не снимайте экран во время ввода. Существующий пароль БД при повторном запуске с тем же PVC сохраняйте.
+
+```bash
+read -rsp 'APP_SECRET: ' APP_SECRET; echo
+read -rsp 'POSTGRES_PASSWORD: ' PG_PASSWORD; echo
+(umask 077
+ kubectl create secret generic yamaleeva-app-secret    --from-literal=APP_SECRET="$APP_SECRET"    --from-literal=POSTGRES_PASSWORD="$PG_PASSWORD"    --dry-run=client -o yaml > k8s/app-secret.yaml)
+unset APP_SECRET PG_PASSWORD
+```
+
+Примените рабочий Secret, конфигурацию и манифесты. Файл `app-secret.example.yaml` служит образцом.
+
+```bash
+kubectl apply -f k8s/app-secret.yaml -f k8s/app-configmap.yaml
+kubectl apply -f k8s/postgres-pvc.yaml -f k8s/postgres-service.yaml -f k8s/postgres-deployment.yaml
+kubectl apply -f k8s/redis-service.yaml -f k8s/redis-deployment.yaml
+kubectl apply -f k8s/app-service.yaml -f k8s/app-deployment.yaml
+kubectl rollout status deployment/yamaleeva-app --timeout=180s
+kubectl get pods -o wide
+kubectl get svc,pvc
+kubectl describe pod -l app=yamaleeva-app
+kubectl get cm yamaleeva-app-config -o jsonpath='{.data.APP_OWNER}{"\n"}'
+```
+
+Оставьте этот терминал открытым после запуска проброса порта.
+
+```bash
+kubectl port-forward svc/yamaleeva-app 8083:8083
+```
+
+Во втором терминале WSL выполните проверки. Для повторной демонстрации очистите только запись для Москвы.
+
+```bash
+BASE=http://127.0.0.1:8083
+curl -fsS "$BASE/" | python3 -m json.tool --no-ensure-ascii
+curl -fsS "$BASE/health" | python3 -m json.tool --no-ensure-ascii
+minikube -p lab5 kubectl -- exec deploy/yamaleeva-redis --   redis-cli DEL 'weather:Ямалеева Азалия Фиразовна:moscow'
+curl -fsS "$BASE/weather/Moscow" | python3 -m json.tool --no-ensure-ascii
+curl -fsS "$BASE/weather/Moscow" | python3 -m json.tool --no-ensure-ascii
+curl -fsS -H 'Content-Type: application/json'   -d '{"text":"ЛР5: проверка PostgreSQL"}' "$BASE/notes"
+echo
+curl -fsS "$BASE/notes" | python3 -m json.tool --no-ensure-ascii
+```
+
+Для отчёта снимите вывод `get pods`, `get svc,pvc`, имя владельца, ответ `/health`, приветствие с именем пода, оба ответа погоды, создание и чтение заметки, а также строки `Liveness`, `Readiness` и `Ready` из `describe pod`. В начале отчёта предусмотрен снимок образа, загруженного в Minikube.
