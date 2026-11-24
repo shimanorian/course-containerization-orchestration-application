@@ -149,7 +149,10 @@ minikube -p lab5 image ls | grep yamaleeva
 read -rsp 'APP_SECRET: ' APP_SECRET; echo
 read -rsp 'POSTGRES_PASSWORD: ' PG_PASSWORD; echo
 (umask 077
- kubectl create secret generic yamaleeva-app-secret    --from-literal=APP_SECRET="$APP_SECRET"    --from-literal=POSTGRES_PASSWORD="$PG_PASSWORD"    --dry-run=client -o yaml > k8s/app-secret.yaml)
+ kubectl create secret generic yamaleeva-app-secret  \
+   --from-literal=APP_SECRET="$APP_SECRET"  \
+   --from-literal=POSTGRES_PASSWORD="$PG_PASSWORD"  \
+   --dry-run=client -o yaml > k8s/app-secret.yaml)
 unset APP_SECRET PG_PASSWORD
 ```
 
@@ -179,10 +182,12 @@ kubectl port-forward svc/yamaleeva-app 8083:8083
 BASE=http://127.0.0.1:8083
 curl -fsS "$BASE/" | python3 -m json.tool --no-ensure-ascii
 curl -fsS "$BASE/health" | python3 -m json.tool --no-ensure-ascii
-minikube -p lab5 kubectl -- exec deploy/yamaleeva-redis --   redis-cli DEL 'weather:Ямалеева Азалия Фиразовна:moscow'
+minikube -p lab5 kubectl -- exec deploy/yamaleeva-redis -- \
+  redis-cli DEL 'weather:Ямалеева Азалия Фиразовна:moscow'
 curl -fsS "$BASE/weather/Moscow" | python3 -m json.tool --no-ensure-ascii
 curl -fsS "$BASE/weather/Moscow" | python3 -m json.tool --no-ensure-ascii
-curl -fsS -H 'Content-Type: application/json'   -d '{"text":"ЛР5: проверка PostgreSQL"}' "$BASE/notes"
+curl -fsS -H 'Content-Type: application/json' \
+  -d '{"text":"ЛР5: проверка PostgreSQL"}' "$BASE/notes"
 echo
 curl -fsS "$BASE/notes" | python3 -m json.tool --no-ensure-ascii
 ```
